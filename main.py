@@ -89,20 +89,19 @@ def format_diff(diff: str | None, ref_sequence: str) -> Diff | None:
     return None
 
 
-def handle_samples(prev_row: dict, haplotype: Haplotype):
-    prev_samples = prev_row.get("samples", {})
+def handle_samples(prev_samples: dict, haplotype: Haplotype, alt_index: int):
     samples: Dict[str, List] = {**prev_samples}
-    alt: List[str] = prev_row.get("alt", [])
 
     for sample_id, value in haplotype.samples.items():
         prev_sample = prev_samples.get(sample_id)
         samples_value = [prev_sample] if prev_sample else []
         for _ in range(value):
-            samples_value.append(len(alt) + 1)
+            samples_value.append(alt_index)
             samples[sample_id] = samples_value
 
 
     return samples
+
 
 
 def build_vcf_row(formatted_haplotypes: List[Haplotype]) -> List[VcfRow]:
@@ -123,7 +122,8 @@ def build_vcf_row(formatted_haplotypes: List[Haplotype]) -> List[VcfRow]:
             if current_alt not in alt:
                 alt.append(current_alt)
 
-            samples: Dict[str, List] = handle_samples(prev_row, haplotype)
+            prev_samples = prev_row.get("samples", {})
+            samples: Dict[str, List] = handle_samples(prev_samples, haplotype, alt_index=len(alt))
 
             vcf_rows[row_key] = VcfRow(
                 pos=pos,
