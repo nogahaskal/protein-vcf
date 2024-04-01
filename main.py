@@ -26,7 +26,7 @@ class Haplotype(BaseModel):
     id: str
 
 
-class VcfRow(BaseModel):
+class Item(BaseModel):
     prot: str
     pos: str
     id: str
@@ -36,12 +36,27 @@ class VcfRow(BaseModel):
     samples: Dict[str, List[int]]
 
 
-def get_formatted_haplotypes(json_content: dict) -> List[Haplotype]:
+HEADER_TO_KEY_MAP = {
+    'PROT': 'prot',
+    'POS': 'pos',
+    'ID': 'id',
+    'REF': 'ref',
+    'ALT': 'alt',
+    'INFO': 'info'
+}
+
+ALT_SEPARATOR = ','
+SAMPLE_SEPARATOR = '|'
+
+def get_formatted_haplotypes(json_content: dict) -> tuple[List[Haplotype], List[str]]:
+    sample_ids = set()
     protein_haplotypes = json_content.get("protein_haplotypes", [])
     formatted_haplotypes = []
     for haplotype in protein_haplotypes:
         frequency = haplotype.get("frequency", 0)
         samples = haplotype.get("samples", {})
+        sample_ids.update(samples.keys())
+
         id = haplotype.get("hex", "")
         diffs = []
         aligned_sequences = haplotype.get("aligned_sequences", [""])
@@ -63,7 +78,7 @@ def get_formatted_haplotypes(json_content: dict) -> List[Haplotype]:
         )
         formatted_haplotypes.append(formatted_haplotype)
 
-    return formatted_haplotypes
+    return formatted_haplotypes, list(sample_ids)
 
 
 def format_diff(diff: str | None, ref_sequence: str) -> Diff | None:
@@ -82,7 +97,9 @@ def format_diff(diff: str | None, ref_sequence: str) -> Diff | None:
             [_, deletion_part] = remaining_part.split(DEL_OPERATOR)
             ref = ref_sequence[int(pos)]
             alt = DEL_STRING
-            info = f"SVTYPE=DEL;END={int(pos) + int(deletion_part.strip('{').strip('}'))}"
+            info = (
+                f"SVTYPE=DEL;END={int(pos) + int(deletion_part.strip('{').strip('}'))}"
+            )
             return Diff(pos=pos, ref=ref, alt=alt, info=info)
 
         return None
@@ -99,12 +116,10 @@ def handle_samples(prev_samples: dict, haplotype: Haplotype, alt_index: int):
             samples_value.append(alt_index)
             samples[sample_id] = samples_value
 
-
     return samples
 
 
-
-def build_vcf_row(formatted_haplotypes: List[Haplotype]) -> List[VcfRow]:
+def build_items(formatted_haplotypes: List[Haplotype]) -> List[Item]:
     vcf_rows = {}
     for haplotype in formatted_haplotypes:
         for diff in haplotype.diffs:
@@ -123,9 +138,11 @@ def build_vcf_row(formatted_haplotypes: List[Haplotype]) -> List[VcfRow]:
                 alt.append(current_alt)
 
             prev_samples = prev_row.get("samples", {})
-            samples: Dict[str, List] = handle_samples(prev_samples, haplotype, alt_index=len(alt))
+            samples: Dict[str, List] = handle_samples(
+                prev_samples, haplotype, alt_index=len(alt)
+            )
 
-            vcf_rows[row_key] = VcfRow(
+            vcf_rows[row_key] = Item(
                 pos=pos,
                 prot=prot,
                 id=id,
@@ -138,7 +155,44 @@ def build_vcf_row(formatted_haplotypes: List[Haplotype]) -> List[VcfRow]:
     return vcf_rows.values()
 
 
-def build_vcf_file(vcf_rows: List[VcfRow], output: str):
+def append_samples_to_items(
+    rows: List[Item], all_sample_ids: List[str]
+) -> List[Item]:
+    rows_with_samples = []
+    for row in rows:
+        row.samples = {
+            **{sample_id: [0, 0] for sample_id in all_sample_ids},
+            **row.samples,
+        }
+        for sample_id, value in row.samples.items():
+            if len(value) < 2:
+                row.samples[sample_id].extend([0] * (2 - len(value)))
+        rows_with_samples.append(row)
+    return rows_with_samples
+
+def generate_vcf_rows(items: List[Item], headers: List[str]):
+    rows = []
+    for item in items:
+        row = []
+        dict_item = dict(item)
+        for header in headers:
+            key = HEADER_TO_KEY_MAP.get(header)
+            if key:
+                cell = dict_item[key]
+                if header == 'ALT':
+                    cell = ALT_SEPARATOR.join(cell)
+            else:
+                sample = item.samples.get(header)
+                cell = SAMPLE_SEPARATOR.join(str(num) for num in sample)
+            
+            row.append(cell)
+        rows.append(row)
+    return rows
+        
+
+
+
+def build_vcf_file(vcf_rows: List[List[str]], output: str):
     for row in vcf_rows:
         print(row)
 
@@ -155,9 +209,12 @@ def convert_json_to_pvcf(path: str, output: str):
     with open(path, "r") as file:
         try:
             json_content = json.load(file)
-            formatted_haplotypes = get_formatted_haplotypes(json_content)
-            vcf_rows = build_vcf_row(formatted_haplotypes)
-            print(vcf_rows)
+            formatted_haplotypes, sample_ids = get_formatted_haplotypes(json_content)
+            items = build_items(formatted_haplotypes)
+            items_with_samples = append_samples_to_items(items, sample_ids)
+            vcf_headers = [*HEADER_TO_KEY_MAP.keys(), *[str(sample_id) for sample_id in sample_ids]]
+            vcf_rows = generate_vcf_rows(items_with_samples, vcf_headers)
+
         except Exception as e:
             print(e)
 
