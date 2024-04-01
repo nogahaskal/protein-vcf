@@ -23,13 +23,11 @@ class Haplotype(BaseModel):
     aligned_sequences: List[str]
     diffs: List[Diff]
     name: str
-    id: str
 
 
 class Item(BaseModel):
     prot: str
     pos: str
-    id: str
     ref: str
     alt: List[str]
     info: str
@@ -39,7 +37,6 @@ class Item(BaseModel):
 HEADER_TO_KEY_MAP = {
     'PROT': 'prot',
     'POS': 'pos',
-    'ID': 'id',
     'REF': 'ref',
     'ALT': 'alt',
     'INFO': 'info'
@@ -47,6 +44,7 @@ HEADER_TO_KEY_MAP = {
 
 ALT_SEPARATOR = ','
 SAMPLE_SEPARATOR = '|'
+TAB_STRING = "\t"
 
 def get_formatted_haplotypes(json_content: dict) -> tuple[List[Haplotype], List[str]]:
     sample_ids = set()
@@ -57,7 +55,6 @@ def get_formatted_haplotypes(json_content: dict) -> tuple[List[Haplotype], List[
         samples = haplotype.get("samples", {})
         sample_ids.update(samples.keys())
 
-        id = haplotype.get("hex", "")
         diffs = []
         aligned_sequences = haplotype.get("aligned_sequences", [""])
         for diff_data in haplotype.get("diffs", []):
@@ -74,7 +71,6 @@ def get_formatted_haplotypes(json_content: dict) -> tuple[List[Haplotype], List[
             aligned_sequences=aligned_sequences,
             diffs=diffs,
             name=name,
-            id=id,
         )
         formatted_haplotypes.append(formatted_haplotype)
 
@@ -130,7 +126,6 @@ def build_items(formatted_haplotypes: List[Haplotype]) -> List[Item]:
             pos = diff.pos
             ref = diff.ref
             info = diff.info
-            id = haplotype.id
             current_alt = diff.alt
 
             alt: List[str] = prev_row.get("alt", [])
@@ -145,7 +140,6 @@ def build_items(formatted_haplotypes: List[Haplotype]) -> List[Item]:
             vcf_rows[row_key] = Item(
                 pos=pos,
                 prot=prot,
-                id=id,
                 ref=ref,
                 alt=alt,
                 info=info,
@@ -192,9 +186,12 @@ def generate_vcf_rows(items: List[Item], headers: List[str]):
 
 
 
-def build_vcf_file(vcf_rows: List[List[str]], output: str):
-    for row in vcf_rows:
-        print(row)
+def build_vcf_file(vcf_table: List[List[str]], output: str):
+    with open(output, "a") as file:
+        for row in vcf_table:
+            row_string = TAB_STRING.join(row)
+            file.write(row_string + "\n")
+        
 
 
 @click.group("pvcf")
@@ -214,6 +211,8 @@ def convert_json_to_pvcf(path: str, output: str):
             items_with_samples = append_samples_to_items(items, sample_ids)
             vcf_headers = [*HEADER_TO_KEY_MAP.keys(), *[str(sample_id) for sample_id in sample_ids]]
             vcf_rows = generate_vcf_rows(items_with_samples, vcf_headers)
+            vcf_table = [vcf_headers, *vcf_rows]
+            build_vcf_file(vcf_table, output)
 
         except Exception as e:
             print(e)
