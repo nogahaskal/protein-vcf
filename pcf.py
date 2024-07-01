@@ -288,8 +288,8 @@ def convert_json_to_pcf(path: str, output: str):
     with open(path, "r") as file:
         try:
             print(f"Converting {path} to VCF format")
-            all_transcripts_data = json.load(file)
-            for transcript_data in all_transcripts_data:
+            for line in file:
+                transcript_data = json.loads(line)
                 formatted_haplotypes, sample_ids = get_formatted_haplotypes(transcript_data)
                 items = build_items(formatted_haplotypes)
                 genes = get_genes_by_ids([item.prot for item in items])
